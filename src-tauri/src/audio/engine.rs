@@ -20,8 +20,18 @@ pub fn setup_audio() -> (SynthState, cpal::Stream) {
     let synth = Arc::new(Mutex::new(Synthesizer::new(sample_rate)));
     let synth_clone = synth.clone();
 
+    let buffer_size = supported_config.buffer_size().clone();
     let config: cpal::StreamConfig = supported_config.into();
 
+    if cfg!(debug_assertions) {
+        println!(
+            "Audio output device: {}, Sample Rate: {}, Channels: {}, buffer size: {:?}",
+            device.name().unwrap_or("Unknown Device".to_string()),
+            sample_rate,
+            channels,
+            buffer_size
+        );
+    }
     let stream = device
         .build_output_stream(
             &config,
