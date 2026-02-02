@@ -1,4 +1,21 @@
+/// Lock-free ring buffer for waveform visualization.
+///
+/// - Single writer (audio callback)
+/// - Multiple readers (IPC / UI)
+/// - Stores mono `f32` samples
+/// - Overwrites old samples when capacity is exceeded
+///
+/// Synchronization:
+/// - Writer publishes samples with `Release` store to `head`
+/// - Readers acquire `head` with `Acquire` load before reading samples
+///
+/// This buffer does NOT expose references to internal storage.
+/// All snapshots return owned data to avoid lifetime issues.
+
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use super::SNAPSHOT_SIZE;
+
+pub const DEFAULT_CAPACITY: usize = 16384;
 
 pub struct WaveformRingBuffer {
     buffer: Box<[AtomicU32]>,   // fix size storage
@@ -6,10 +23,25 @@ pub struct WaveformRingBuffer {
     head_pointer: AtomicUsize,  // sequence number
 }
 
+impl Default for WaveformRingBuffer {
+    fn default() -> Self {
+        Self::new(DEFAULT_CAPACITY)
+    }
+}
+
 impl WaveformRingBuffer {
+    /// Creates a new ring buffer with the given capacity.
+    ///
+    /// # Panics
+    /// Panics if `capacity` is not a power of two or is zero.
     pub fn new(capacity: usize) -> Self {
-        assert!(capacity.is_power_of_two());
-        assert!(capacity > 0);
+        assert!(
+            capacity >= SNAPSHOT_SIZE,
+            "capacity ({}) must be >= SNAPSHOT_SIZE ({})",
+            capacity,
+            SNAPSHOT_SIZE
+        );
+        assert!(capacity.is_power_of_two(), "capacity must be a power of two");
 
         let buffer: Box<[AtomicU32]> =
             (0..capacity).map(|_| AtomicU32::new(0)).collect();
@@ -21,48 +53,64 @@ impl WaveformRingBuffer {
         }
     }
 
+    /// Pushes a single mono sample into the ring buffer.
+    ///
+    /// This method is real-time safe:
+    /// - no allocations
+    /// - no locks
+    /// - O(1)
+    ///
+    /// Must be called from the audio thread (single writer).
     #[inline(always)]
-    fn capacity(&self) -> usize {
-        self.buffer.len()
-    }
-
-    fn load_index_and_head(&self) -> (usize, usize) {
-        let pos = self.head_pointer.load(Ordering::Relaxed);
-        let index = pos & self.mask;
-        (index, pos)
-    }
-
-    fn store_new_sample_by_index(&self, index: usize, sample: f32) {
-        self.buffer[index].store(sample.to_bits(), Ordering::Relaxed);
-    }
-
-    fn save_new_position_in_head_pointer(&self, new_position: usize) {
-        self.head_pointer.store(new_position, Ordering::Release);
-    }
-
-    /// Audio thread — realtime safe
     pub fn push(&self, sample: f32) {
         let (insert_index, head_position) = self.load_index_and_head();
         self.store_new_sample_by_index(insert_index, sample);
         self.save_new_position_in_head_pointer(head_position + 1);
     }
 
-    /// IPC / UI thread
-    pub fn snapshot(&self, snapshot_length: usize) -> Vec<f32> {
-        let length = snapshot_length.min(self.capacity());
-        let mut result = vec![0.0f32; length];
+    /// Returns a fixed-size snapshot of the last `SNAPSHOT_SIZE` mono samples.
+    ///
+    /// The snapshot contains the last `SNAPSHOT_SIZE` samples.
+    /// If fewer samples are available, the leading part is zero-padded.
+    ///
+    /// This method allocates and is intended to be called from a non-realtime
+    /// thread (e.g. IPC / UI).
+    pub fn snapshot(&self) -> Vec<f32> {
+        let mut result = vec![0.0f32; SNAPSHOT_SIZE];
         self.snapshot_into(&mut result);
         result
     }
+}
+
+impl WaveformRingBuffer {
+
+    #[inline(always)]
+    fn capacity(&self) -> usize {
+        self.buffer.len()
+    }
+
+    #[inline(always)]
+    fn load_index_and_head(&self) -> (usize, usize) {
+        let pos = self.head_pointer.load(Ordering::Relaxed);
+        let index = pos & self.mask;
+        (index, pos)
+    }
+
+    #[inline(always)]
+    fn store_new_sample_by_index(&self, index: usize, sample: f32) {
+        self.buffer[index].store(sample.to_bits(), Ordering::Relaxed);
+    }
+
+    #[inline(always)]
+    fn save_new_position_in_head_pointer(&self, new_position: usize) {
+        self.head_pointer.store(new_position, Ordering::Release);
+    }
 
     fn snapshot_into(&self, out: &mut [f32]) {
-        
         let occupied_size = self.clamp_len_and_zero_tail(out);
         
         // Fast-path: occupied_size == 0
-        if occupied_size == 0 {
-            return;
-        }
+        if occupied_size == 0 { return; }
 
         let current_head_pointer = self.head_pointer.load(Ordering::Acquire);
         self.copy_samples_to_snapshot(out, current_head_pointer, occupied_size);
