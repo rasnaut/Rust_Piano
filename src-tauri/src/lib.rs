@@ -31,7 +31,7 @@ struct AudioState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let (synth, stream) = setup_audio();
+    let (synth, stream, ring_audio_buffer) = setup_audio();
 
     let _audio_state = AudioState { _stream: stream };
 

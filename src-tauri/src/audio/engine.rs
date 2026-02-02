@@ -2,8 +2,15 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crate::synth::synthesizer::{Synthesizer, SynthState};
 use parking_lot::Mutex;
 use std::sync::Arc;
+use crate::waveform::waveform_ring_buffer::WaveformRingBuffer;
 
-pub fn setup_audio() -> (SynthState, cpal::Stream) {
+pub struct AudioEngine {
+    pub synth: SynthState,
+    pub ring: Arc<WaveformRingBuffer>,
+    pub stream: cpal::Stream,
+}
+
+pub fn setup_audio() -> (SynthState, cpal::Stream, Arc<WaveformRingBuffer>) {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -19,6 +26,9 @@ pub fn setup_audio() -> (SynthState, cpal::Stream) {
 
     let synth = Arc::new(Mutex::new(Synthesizer::new(sample_rate)));
     let synth_clone = synth.clone();
+
+    let ring = Arc::new(WaveformRingBuffer::default());
+    let ring_clone = ring.clone();
 
     let buffer_size = supported_config.buffer_size().clone();
     let config: cpal::StreamConfig = supported_config.into();
@@ -37,8 +47,9 @@ pub fn setup_audio() -> (SynthState, cpal::Stream) {
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 let mut synth = synth_clone.lock();
-                for frame in data.chunks_mut(channels) {
+                for frame in data.chunks_exact_mut(channels) {
                     let sample = synth.next_sample();
+                    ring_clone.push(sample);
                     for channel_sample in frame.iter_mut() {
                         *channel_sample = sample;
                     }
@@ -51,5 +62,5 @@ pub fn setup_audio() -> (SynthState, cpal::Stream) {
 
     stream.play().expect("Failed to play stream");
 
-    (synth, stream)
+    (synth, stream, ring)
 }
