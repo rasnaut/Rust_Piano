@@ -1,5 +1,5 @@
 pub mod waveform;
-mod waveform_ring_buffer;
+pub mod waveform_ring_buffer;
 
 #[cfg(test)]
 mod tests;

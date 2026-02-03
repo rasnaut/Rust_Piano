@@ -13,6 +13,8 @@
 /// All snapshots return owned data to avoid lifetime issues.
 
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use no_panic;
+
 use super::SNAPSHOT_SIZE;
 
 pub const DEFAULT_CAPACITY: usize = 16384;
@@ -61,6 +63,7 @@ impl WaveformRingBuffer {
     /// - O(1)
     ///
     /// Must be called from the audio thread (single writer).
+    #[cfg_attr(not(debug_assertions), no_panic::no_panic)]
     #[inline(always)]
     pub fn push(&self, sample: f32) {
         let (insert_index, head_position) = self.load_index_and_head();
