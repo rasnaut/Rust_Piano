@@ -13,7 +13,6 @@
 /// All snapshots return owned data to avoid lifetime issues.
 
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use no_panic;
 
 use super::SNAPSHOT_SIZE;
 
