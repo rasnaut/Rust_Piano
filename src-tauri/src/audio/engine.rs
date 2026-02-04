@@ -4,12 +4,6 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 use crate::waveform::waveform_ring_buffer::WaveformRingBuffer;
 
-pub struct AudioEngine {
-    pub synth: SynthState,
-    pub ring: Arc<WaveformRingBuffer>,
-    pub stream: cpal::Stream,
-}
-
 pub fn setup_audio() -> (SynthState, cpal::Stream, Arc<WaveformRingBuffer>) {
     let host = cpal::default_host();
     let device = host
